@@ -37,7 +37,7 @@
         "CNY": {
           "inputCacheHit": { "offPeak": 0.02, "peak": 0.04 },
           "inputCacheMiss": { "offPeak": 1, "peak": 2 },
-          "output": { "offPeak": 4, "peak": 8 }
+          "output": { "offPeak": 5, "peak": 10 }
         },
         "USD": {
           "inputCacheHit": { "offPeak": 0.003, "peak": 0.006 },
