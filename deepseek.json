@@ -2,7 +2,7 @@
   "provider": "deepseek",
   "displayName": "DeepSeek",
   "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing",
-  "verifiedAt": "2026-09-12",
+  "verifiedAt": "2026-09-13",
   "defaultCurrency": "CNY",
   "notes": {
     "en": [
@@ -37,7 +37,7 @@
         "CNY": {
           "inputCacheHit": { "offPeak": 0.02, "peak": 0.04 },
           "inputCacheMiss": { "offPeak": 1, "peak": 2 },
-          "output": { "offPeak": 5, "peak": 10 }
+          "output": { "offPeak": 4, "peak": 8 }
         },
         "USD": {
           "inputCacheHit": { "offPeak": 0.003, "peak": 0.006 },
