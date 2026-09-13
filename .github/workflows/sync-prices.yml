@@ -19,7 +19,7 @@ on:
   schedule:
     # Daily. Prices change rarely, and an off-the-hour minute keeps this out of the rush that
     # every other scheduled job in the world joins.
-    - cron: "23 6 * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
