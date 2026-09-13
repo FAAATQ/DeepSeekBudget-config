@@ -1,0 +1,75 @@
+name: Check DeepSeek's published prices
+
+# Why this exists.
+#
+# `deepseek.json` is a transcription of a page DeepSeek owns. Transcribing it by hand is the one
+# step here that can go wrong without looking wrong: a mistyped digit produces a config that reads
+# perfectly plausibly, the app accepts it, and every user sees the wrong price. This job removes
+# the transcription.
+#
+# It **opens a pull request, it does not commit**. The app's own validation rejects a change over
+# 20x, which catches a slipped decimal point but not a subtle mistake -- `4` becoming `40` is 10x
+# and sails through. The reviewer's glance at the diff is the check that actually holds, and it
+# costs seconds compared with editing the JSON by hand.
+#
+# It does not affect the app's network promise. Fetching happens here, on GitHub's runners; the
+# app still only makes a request when its own settings say to.
+
+on:
+  schedule:
+    # Daily. Prices change rarely, and an off-the-hour minute keeps this out of the rush that
+    # every other scheduled job in the world joins.
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No third-party dependencies: the script talks to the docs site with urllib, so there is
+      # nothing to install and nothing to pin.
+      - name: Fetch both language editions and rewrite what moved
+        run: python3 .github/scripts/sync-prices.py
+
+      - name: Open a pull request if anything moved
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- deepseek.json; then
+            echo "nothing moved; no pull request"
+            exit 0
+          fi
+
+          branch="price-sync/$(date -u +%Y%m%d)"
+          title="Price sync: DeepSeek's published figures have changed"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          git add deepseek.json
+          git commit -m "${title}" -m "$(cat PR_BODY.md)"
+          git push -u origin "${branch}"
+
+          # `gh pr create` fails if a pull request for this branch is already open, which is the
+          # state a re-run lands in. That is not an error worth failing the job over.
+          gh pr create --title "${title}" --body-file PR_BODY.md --base main --head "${branch}" \
+            || echo "a pull request for ${branch} is already open"
+
+      - name: Fail loudly if the page could not be parsed
+        if: failure()
+        run: |
+          echo "::error::Could not read DeepSeek's pricing page. This is not a price change --" \
+                "the page most likely changed shape, and the parser needs updating." \
+                "Nothing was written."
