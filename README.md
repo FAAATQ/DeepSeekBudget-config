@@ -1,6 +1,6 @@
-# API Budget — 价格配置
+# DeepSeek Budget — 价格配置
 
-[API Budget](https://github.com/FAAATQ/deepseek-budget) 的**实时价格与峰谷时段数据**。
+[DeepSeek Budget](https://github.com/FAAATQ/DeepSeekBudget) 的**实时价格与峰谷时段数据**。
 
 app 里已经内置了一份同样的数据（编译进二进制，所以离线可用）。这个仓库是它的**可更新副本**：
 官方改了价格或时段，改这里的 `deepseek.json` 并提交，用户点一下「检查更新」就能拿到——
@@ -15,14 +15,36 @@ app 里已经内置了一份同样的数据（编译进二进制，所以离线�
 app 从这个地址读取（**写死在代码里**，改它要同时改 app 的 CSP `connect-src`）：
 
 ```
-https://raw.githubusercontent.com/FAAATQ/deepseek-budget-config/main/deepseek.json
+https://cdn.jsdelivr.net/gh/FAAATQ/DeepSeekBudget-config@main/deepseek.json
+```
+
+### 为什么走 jsDelivr 而不是 raw.githubusercontent.com
+
+2026-09-13 实测（国内网络）：`raw.githubusercontent.com` **5/5 超时**（每次 19~20 秒），
+jsDelivr 镜像 **4/4 通**（约 0.3 秒）。这个 app 的用户主要在国内，用原域名等于
+「检查更新」对他们是坏的。
+
+代价是**缓存**：jsDelivr 对分支引用发 `s-maxage=43200`（边缘 12 小时）、
+`max-age=604800`（浏览器 7 天）。
+
+- **浏览器那一半 app 自己挡掉了** —— 前端用 `cache: "no-store"` 拉取
+- **边缘那一半靠 purge**：本仓库有一个工作流，每次推送到 `main` 都会调
+  `purge.jsdelivr.net` 清掉缓存，所以改完价格**下一次点击就能看到**，不用等 12 小时
+
+> 试过在 URL 后面加查询串来击穿缓存 —— **没用**。实测 jsDelivr 会把查询串归一化掉，
+> 换个串照样返回 `cf-cache-status: HIT`。
+
+手工清一次（工作流挂了时用）：
+
+```bash
+curl "https://purge.jsdelivr.net/gh/FAAATQ/DeepSeekBudget-config@main/deepseek.json"
 ```
 
 ## 怎么改价格
 
 1. 编辑 `deepseek.json`
 2. **把 `verifiedAt` 改成你核对官方页面的那一天**（`YYYY-MM-DD`）
-3. 提交
+3. 提交 —— purge 工作流会自动跑，不用手动清缓存
 
 `verifiedAt` 不只是个标注，它参与判断：**比用户手上那份旧的配置会被拒收**，
 所以忘了改日期，更新就不会生效（这是有意的——防止 CDN 缓存把价格回滚）。

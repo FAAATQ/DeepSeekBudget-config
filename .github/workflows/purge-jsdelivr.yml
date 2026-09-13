@@ -1,0 +1,39 @@
+name: Purge jsDelivr cache
+
+# Why this exists.
+#
+# The app fetches this file through the jsDelivr mirror rather than from
+# raw.githubusercontent.com, because the raw host is unreachable from mainland China
+# (measured 2026-09-13: 5 of 5 attempts timed out, 19-20 s each) and that is where most
+# of this app's users are. The mirror costs us caching: jsDelivr serves a *branch* ref
+# with `s-maxage=43200`, so without this workflow a price change would take up to half a
+# day to become visible, and "Check for updates" would look broken in the meantime.
+#
+# Purging on push makes the next click see the new file. It is deliberately not the app's
+# job to bust the cache: the app cannot, and appending a query string does not work
+# either (measured -- jsDelivr normalises it away and still answers `HIT`).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deepseek.json
+  workflow_dispatch:
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Purge the jsDelivr edge cache for deepseek.json
+        run: |
+          set -euo pipefail
+          url="https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/deepseek.json"
+          echo "purging ${url}"
+          response="$(curl -sS --fail-with-body --max-time 60 "${url}")"
+          echo "${response}"
+          # jsDelivr answers 200 with a JSON body either way, so check the body rather
+          # than the status code -- a throttled purge is a silent failure otherwise.
+          echo "${response}" | grep -q '"status": *"finished"' \
+            || { echo "::error::jsDelivr did not report a finished purge"; exit 1; }
+          echo "${response}" | grep -q '"throttled": *false' \
+            || { echo "::error::the purge was throttled"; exit 1; }
