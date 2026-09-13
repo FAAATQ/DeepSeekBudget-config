@@ -62,10 +62,26 @@ jobs:
           git commit -m "${title}" -m "$(cat PR_BODY.md)"
           git push -u origin "${branch}"
 
-          # `gh pr create` fails if a pull request for this branch is already open, which is the
-          # state a re-run lands in. That is not an error worth failing the job over.
-          gh pr create --title "${title}" --body-file PR_BODY.md --base main --head "${branch}" \
-            || echo "a pull request for ${branch} is already open"
+          # `gh pr create` fails when a pull request for this branch is already open, which is the
+          # state a re-run lands in. Tolerate exactly that, and nothing else.
+          #
+          # The first version of this step ended in `|| echo "already open"`, which swallowed every
+          # failure. It was written that way precisely because it looked tidy — and it hid a real
+          # one: this repository has `can_approve_pull_request_reviews: false`, so `GITHUB_TOKEN`
+          # may not open pull requests at all. The run reported success while producing no PR.
+          # A workflow that cannot do its one job must say so.
+          if ! output="$(gh pr create --title "${title}" --body-file PR_BODY.md \
+                           --base main --head "${branch}" 2>&1)"; then
+            case "${output}" in
+              *"already exists"*)
+                echo "a pull request for ${branch} is already open" ;;
+              *)
+                echo "::error::gh pr create failed — ${output}"
+                exit 1 ;;
+            esac
+          else
+            echo "${output}"
+          fi
 
       - name: Fail loudly if the page could not be parsed
         if: failure()
