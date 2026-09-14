@@ -113,11 +113,33 @@ def parse_prices(page: str, currency: str) -> dict:
 
 
 def parse_windows(page: str) -> list[list[str]]:
-    """The peak-window sentence. This changing matters more than any price changing."""
+    """The peak-window sentence. This changing matters more than any price changing.
+
+    Scoped to the **sentence that states the rule**, not to the whole page. A bare
+    `HH:MM - HH:MM` scan over all the prose picks up any other time range a future edit
+    introduces — a maintenance note, a changelog line, an example — and hands it to the app as a
+    peak window. Nothing downstream would catch that: the app's validation checks structure and
+    price sanity, not "does this match DeepSeek's rule", so the icon would simply be wrong during
+    that window for every user until someone happened to notice.
+
+    The count is bounded as well. Four is generous; DeepSeek publishes two, and the bound is what
+    turns a silent mis-parse into a failed run.
+    """
     flat = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page)))
-    found = re.findall(r"\b(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\b", flat)
-    assert found, "no time windows on the page — the sentence moved or was reworded"
-    return [list(pair) for pair in dict.fromkeys(found)]
+    sentence = next(
+        (
+            s
+            for s in re.split(r"(?<=[.!?])\s+", flat)
+            if re.search(r"peak hours", s, re.I) and re.search(r"\d{2}:\d{2}", s)
+        ),
+        None,
+    )
+    assert sentence, "no sentence states the peak hours — the wording moved"
+    found = re.findall(r"\b(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\b", sentence)
+    assert found, "the peak-hours sentence contains no windows"
+    windows = [list(pair) for pair in dict.fromkeys(found)]
+    assert len(windows) <= 4, f"{len(windows)} windows in one sentence: {windows}"
+    return windows
 
 
 def fmt(value: float) -> str:
