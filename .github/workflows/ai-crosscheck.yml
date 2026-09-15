@@ -30,8 +30,14 @@ name: AI cross-check — read the page a second time
 
 on:
   schedule:
-    # An hour after the price check, so a disagreement is read alongside the sync it refers to.
+    # Twice a day, for the same reason the price sync runs twice: GitHub's scheduler delays
+    # under load and drops queued jobs outright when load is high (measured 2026-09-15 - a
+    # 06:53 job ran at 12:16, 5h23m late). A second reader that only shows up half the time
+    # is a second reader whose absence you cannot tell from "the two agreed".
+    #
+    # An hour after each price check, so a disagreement is read alongside the sync it refers to.
     - cron: "53 6 * * *"
+    - cron: "11 19 * * *"
   workflow_dispatch:
     inputs:
       inject:
