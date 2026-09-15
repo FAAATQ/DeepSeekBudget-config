@@ -87,6 +87,36 @@ def numeric_tokens(text: str) -> set[float]:
     return {float(token) for token in re.findall(r"\d+(?:\.\d+)?", text)}
 
 
+def as_number(value: object) -> float:
+    """A price the model reported, as a float - accepting the currency symbol it will include.
+
+    The prompt asks for bare numbers, and the page prints `$0.003` and `0.02元`. A model that
+    copies the page faithfully hands back the symbol with the digits, which is a *correct*
+    reading of the page and a strict parse refuses it. That is not a fabrication being caught,
+    it is a formatting difference, and the two must not be confused: a gate that fails on
+    formatting is a gate that fails on ordinary days, and a gate that fails on ordinary days
+    gets switched off.
+
+    So one leading currency symbol or code is dropped, and trailing currency text with it.
+    Anything left that is not a number still raises.
+    """
+    import re as _re
+
+    if isinstance(value, bool):
+        raise Refused(f"a price came through as a boolean: {value!r}")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        raise Refused(f"a price is neither a number nor a string: {value!r}")
+
+    cleaned = _re.sub(r"^\s*(?:US)?[$¥￥€£]?\s*", "", value)
+    cleaned = _re.sub(r"\s*(?:元|CNY|USD|RMB)\s*$", "", cleaned, flags=_re.I)
+    try:
+        return float(cleaned)
+    except ValueError:
+        raise Refused(f"a price is not a number even after the currency is stripped: {value!r}")
+
+
 def check_shape(facts: object) -> None:
     if not isinstance(facts, dict):
         raise Refused(f"the model's answer is not a JSON object: {type(facts).__name__}")
@@ -133,12 +163,9 @@ def check_shape(facts: object) -> None:
                 if not isinstance(triple, dict):
                     raise Refused(f"{model['id']}/{currency}: no `{key}`")
                 for tier in TIERS:
-                    value = triple.get(tier)
-                    # `bool` is an `int` in Python; a stray `true` must not read as 1.
-                    if not isinstance(value, (int, float)) or isinstance(value, bool):
-                        raise Refused(
-                            f"{model['id']}/{currency}/{key}.{tier} is not a number: {value!r}"
-                        )
+                    # Parsed here rather than only at use, so a value that is not a number stops
+                    # the run even if nothing downstream happens to touch it.
+                    as_number(triple.get(tier))
 
 
 def check_grounding(facts: dict, page_by_currency: dict[str, str]) -> None:
@@ -150,7 +177,7 @@ def check_grounding(facts: dict, page_by_currency: dict[str, str]) -> None:
         for currency in CURRENCIES:
             for key in KEYS:
                 for tier in TIERS:
-                    value = float(model[currency][key][tier])
+                    value = as_number(model[currency][key][tier])
                     if value not in printed[currency]:
                         absent.append(f"{model['id']} {currency} {key}.{tier} = {value}")
     if absent:
@@ -174,7 +201,7 @@ def as_by_model(facts: dict) -> dict:
     for currency in CURRENCIES:
         for key in KEYS:
             for tier in TIERS:
-                column = [float(model[currency][key][tier]) for model in facts["models"]]
+                column = [as_number(model[currency][key][tier]) for model in facts["models"]]
                 for mid in ids:
                     by_model[mid][currency].setdefault(key, {})[tier] = list(column)
     return by_model
@@ -197,7 +224,7 @@ def compare_with_parser(facts: dict, parser_by_model: dict) -> list[str]:
         for currency, parsed in parser_by_model.items():
             for key in KEYS:
                 for tier in TIERS:
-                    mine = float(model[currency][key][tier])
+                    mine = as_number(model[currency][key][tier])
                     theirs = float(parsed[key][tier][index])
                     if mine != theirs:
                         disagreements.append(

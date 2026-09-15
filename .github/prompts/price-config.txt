@@ -41,6 +41,10 @@ printed on the page in every leaf:
  "inputCacheMiss": {"offPeak": 0, "peak": 0},
  "output": {"offPeak": 0, "peak": 0}}
 
+Report each figure as a bare number - the digits only. The page prints its prices with a
+currency on them ("$0.003", "0.02元"); strip that and give the number. So the English page's
+"$0.3" is `0.3` and the Chinese page's "9元" is `9`.
+
 The sentence "Off-peak rates are half of the peak rates" states a rule, not a source of numbers:
 report the off-peak figures the page prints, not ones derived from that sentence.
 
