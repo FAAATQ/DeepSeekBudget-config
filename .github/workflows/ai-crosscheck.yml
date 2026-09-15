@@ -33,6 +33,11 @@ on:
     # An hour after the price check, so a disagreement is read alongside the sync it refers to.
     - cron: "53 6 * * *"
   workflow_dispatch:
+    inputs:
+      inject:
+        description: "Self-test. Replace the page's weekday phrase with this text before the
+          model sees it. The run MUST FAIL - a green run here means the alarm does not ring."
+        required: false
 
 permissions:
   contents: read
@@ -52,13 +57,27 @@ jobs:
       - run: npm install -g @github/copilot
 
       - name: Fetch the page and render the prompt
+        env:
+          # Empty on every scheduled run. Set only by the self-test below.
+          INJECT: ${{ inputs.inject }}
         run: |
           python3 - <<'PY'
-          import importlib.util, re, html
+          import importlib.util, re, html, os
           spec = importlib.util.spec_from_file_location("sp", ".github/scripts/sync-prices.py")
           sp = importlib.util.module_from_spec(spec); spec.loader.exec_module(sp)
           urls = re.findall(r'"(https://[^"]+)"', open(".github/scripts/sync-prices.py").read())
           page = sp.get([u for u in urls if "pricing" in u][0])
+
+          # The self-test. The alarm is only worth having if it has been heard, and the only way
+          # to hear it is to make the two readers disagree on purpose. The mutation is applied
+          # here, to the text the model reads, and nowhere else - `deepseek.json` is untouched
+          # and nothing in this workflow writes anything.
+          inject = os.environ.get("INJECT", "").strip()
+          if inject:
+              before = "Monday through Friday"
+              assert before in page, f"the page no longer says {before!r}; update the self-test"
+              page = page.replace(before, inject, 1)
+              print(f"SELF-TEST: {before!r} replaced with {inject!r} - this run must FAIL")
 
           text = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page)))
           tpl = open(".github/prompts/peak-rule.txt").read()
