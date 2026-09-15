@@ -47,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -86,6 +88,15 @@ jobs:
           print(f"page {len(text)} chars, prompt {len(tpl) + len(text)} chars")
           PY
 
+      # This job only reads - it holds `contents: read` and never pushes - so the token
+      # `actions/checkout` would leave in `.git/config` is worth nothing to it anyway. Checkout
+      # is still told not to persist one, for a reason that outlives today's permissions: the
+      # next step hands the reader a page DeepSeek controls, and a reader that can run shell
+      # commands (measured 2026-09-15, Control B of probe-injection.yml) should not have a
+      # credential within reach, whatever that credential currently happens to be able to do.
+      # Read-only is a property of the `permissions:` block; being unreachable is a property of
+      # this line, and the second survives someone editing the first.
+      #
       # Invoked directly rather than through `actions/ai-inference`. That action reports success
       # and produces no output when the file it was told to attach does not reach the model,
       # which is exactly what happened while this was being built - the log said nothing and the

@@ -47,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -84,6 +86,21 @@ jobs:
           print(f"en {len(pages['en'])} bytes, zh {len(pages['zh'])} bytes, prompt {len(prompt)} chars")
           PY
 
+      # Every step so far is ours. The steps below read a page DeepSeek controls, and that page is
+      # untrusted input: if it ever carries text aimed at the reader rather than at a human, the
+      # reader is what gets injected.
+      #
+      # Measured 2026-09-15, `probe-injection.yml` on the test branch. A model reading a page CAN
+      # run shell commands and report their output back (Control B). It cannot see `COPILOT_PAT`
+      # - the CLI strips secret-shaped variables out of the shell it hands the model, while
+      # leaving ordinary ones in place (Controls C and D). But `actions/checkout` had left this
+      # run's own GITHUB_TOKEN sitting in `.git/config`, and the reader could read that (Control
+      # G returned 1): a reader that can run commands, holding a token with `contents: write`.
+      #
+      # So checkout is told not to leave one. With `persist-credentials: false` the token is
+      # never written to `.git/config` at all, for any step, and the step that pushes sets it
+      # for itself. Nothing to remove means nothing to forget to remove.
+      #
       # Invoked directly rather than through `actions/ai-inference`. That action reports success
       # and produces no output when the file it was told to attach never reaches the model -
       # measured while this was being built. The step passed, the log said nothing, and the model
@@ -151,6 +168,20 @@ jobs:
             echo "nothing moved; no pull request"
             exit 0
           fi
+
+          # Put the credential back for the push.
+          #
+          # `actions/checkout` now runs with `persist-credentials: false`, so nothing in this
+          # job has a credential in `.git/config` - which is the point, because the step above
+          # hands a page we do not control to a reader that can run shell commands. But
+          # `git push` authenticates from exactly that config key and nothing else; `GH_TOKEN`
+          # in the environment only reaches `gh`, not `git`. Without this line the push fails
+          # with a 403 that reads like a permissions problem on the branch.
+          #
+          # Re-installed here, after the reader is done, and scoped to this one step: the
+          # window in which it exists is the window in which no untrusted input is being read.
+          git config http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
 
           branch="price-sync/$(date -u +%Y%m%d)"
           title="Price sync: DeepSeek's published figures have changed"
