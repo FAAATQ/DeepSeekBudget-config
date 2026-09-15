@@ -40,7 +40,7 @@
           "output": { "offPeak": 4, "peak": 8 }
         },
         "USD": {
-          "inputCacheHit": { "offPeak": 0.003, "peak": 0.006 },
+          "inputCacheHit": { "offPeak": 0.003, "peak": 0.005 },
           "inputCacheMiss": { "offPeak": 0.15, "peak": 0.3 },
           "output": { "offPeak": 0.6, "peak": 1.2 }
         }
