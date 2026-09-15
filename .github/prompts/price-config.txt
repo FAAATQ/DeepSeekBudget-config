@@ -1,0 +1,53 @@
+Below are two editions of DeepSeek's API pricing page: the English one, and the Chinese one.
+They list the same models. The English page prints the price table in USD; the Chinese page
+prints the same models' prices in CNY.
+
+Report only what these pages print. Every number you report must be one that literally appears
+on the page you took it from. Do not compute, round, convert, or supply a figure from memory.
+If a number is not printed there, the run must fail rather than carry your guess.
+
+Reply with one JSON object and nothing else - no prose and no markdown fences:
+
+{
+  "schedule": {
+    "quote":   the sentence that states which days the peak rule applies to, copied word for
+               word from the page,
+    "days":    the weekdays that sentence names, as three-letter abbreviations from
+               ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+    "windows": every peak window, as [["HH:MM","HH:MM"], ...], in UTC, in the order the page
+               lists them
+  },
+  "models": [
+    {
+      "id":      the API model name - the leftmost value on the MODEL row,
+      "version": the matching value on the MODEL VERSION row,
+      "USD":     this model's prices, from the ENGLISH page,
+      "CNY":     this model's prices, from the CHINESE page
+    }
+  ]
+}
+
+The price table has three row groups, in this order:
+
+  1M INPUT TOKENS (CACHE HIT)   ->  "inputCacheHit"
+  1M INPUT TOKENS (CACHE MISS)  ->  "inputCacheMiss"
+  1M OUTPUT TOKENS              ->  "output"
+
+Each row group has an OFF-PEAK row and a PEAK row. The table's columns are the models, in the
+same order the MODEL row lists them. So each price set looks exactly like this, with a number
+printed on the page in every leaf:
+
+{"inputCacheHit": {"offPeak": 0, "peak": 0},
+ "inputCacheMiss": {"offPeak": 0, "peak": 0},
+ "output": {"offPeak": 0, "peak": 0}}
+
+The sentence "Off-peak rates are half of the peak rates" states a rule, not a source of numbers:
+report the off-peak figures the page prints, not ones derived from that sentence.
+
+English page:
+
+{{page_en}}
+
+Chinese page:
+
+{{page_zh}}

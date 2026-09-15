@@ -2,7 +2,7 @@ name: Check DeepSeek's published prices
 
 # Why this exists.
 #
-# `deepseek.json` is a transcription of a page DeepSeek owns. Transcribing it by hand is the one
+# `deepseek.json` is a transcription of pages DeepSeek owns. Transcribing them by hand is the one
 # step here that can go wrong without looking wrong: a mistyped digit produces a config that reads
 # perfectly plausibly, the app accepts it, and every user sees the wrong price. This job removes
 # the transcription.
@@ -14,6 +14,16 @@ name: Check DeepSeek's published prices
 #
 # It does not affect the app's network promise. Fetching happens here, on GitHub's runners; the
 # app still only makes a request when its own settings say to.
+#
+# Two readers, and why.
+#
+# The regex parser in `.github/scripts/sync-prices.py` is exact and fails loudly, but every one of
+# its anchors is a place where a restyled page stops the sync. A model reading the same page does
+# not care about layout -- and cannot be trusted not to invent a figure. So the model produces the
+# reading and `apply-ai-prices.py` gates it twice: every number must be printed on the page it was
+# said to come from (grounding), and the parser must have read the same page the same way (the
+# independent second reading). A fabricated number fails the first; a number that is real but in
+# the wrong column fails the second. See that script's docstring.
 
 on:
   schedule:
@@ -21,6 +31,12 @@ on:
     # every other scheduled job in the world joins.
     - cron: "23 6 * * *"
   workflow_dispatch:
+    inputs:
+      selftest:
+        description: "Self-test. 'fabricate' tampers with the model's answer by a tenth of a
+          cent after the fact. The run MUST FAIL - the number is on no page. A green run here
+          means the gate is not doing anything."
+        required: false
 
 permissions:
   contents: write
@@ -36,10 +52,94 @@ jobs:
         with:
           python-version: "3.12"
 
-      # No third-party dependencies: the script talks to the docs site with urllib, so there is
-      # nothing to install and nothing to pin.
-      - name: Fetch both language editions and rewrite what moved
-        run: python3 .github/scripts/sync-prices.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install -g @github/copilot
+
+      # No third-party Python dependencies: both the fetch and the parser use the standard
+      # library, so there is nothing to install and nothing to pin.
+      - name: Fetch both language editions and render the prompt
+        run: |
+          python3 - <<'PY'
+          import importlib.util, re, html
+          spec = importlib.util.spec_from_file_location("sp", ".github/scripts/sync-prices.py")
+          sp = importlib.util.module_from_spec(spec); spec.loader.exec_module(sp)
+
+          # The raw HTML is kept, not just the flattened text: the parser needs the table
+          # elements. The model gets the flattened form, and grounding runs against that same
+          # form, so a number buried in an attribute or a script tag cannot pass as "printed".
+          pages = {"en": sp.get(sp.EN), "zh": sp.get(sp.ZH)}
+          for name, raw in pages.items():
+              open(f"page-{name}.html", "w", encoding="utf-8").write(raw)
+
+          def flatten(doc):
+              return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", doc)))
+
+          tpl = open(".github/prompts/price-config.txt").read()
+          prompt = tpl.replace("{{page_en}}", flatten(pages["en"]))
+          prompt = prompt.replace("{{page_zh}}", flatten(pages["zh"]))
+          assert "{{" not in prompt, "a placeholder was left unsubstituted"
+          open("full-prompt.txt", "w", encoding="utf-8").write(prompt)
+          print(f"en {len(pages['en'])} bytes, zh {len(pages['zh'])} bytes, prompt {len(prompt)} chars")
+          PY
+
+      # Invoked directly rather than through `actions/ai-inference`. That action reports success
+      # and produces no output when the file it was told to attach never reaches the model -
+      # measured while this was being built. The step passed, the log said nothing, and the model
+      # had answered from memory. Calling the CLI puts stdout and stderr in the log.
+      - name: Ask the model to read both pages
+        id: ai
+        continue-on-error: true
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
+        run: |
+          set -uo pipefail
+          copilot -p "$(cat full-prompt.txt)" -s --no-ask-user --model auto \
+            > facts.json 2> ai-stderr.txt
+          echo "copilot exit=$?  facts=$(wc -c < facts.json) bytes  stderr=$(wc -c < ai-stderr.txt) bytes"
+          head -c 1200 facts.json
+          echo
+          head -c 800 ai-stderr.txt
+
+      - name: Self-test — tamper with the model's answer
+        if: inputs.selftest == 'fabricate'
+        run: |
+          python3 - <<'PY'
+          import json
+          facts = json.load(open("facts.json"))
+          was = facts["models"][0]["USD"]["inputCacheHit"]["offPeak"]
+          now = round(was + 0.0001, 10)
+          facts["models"][0]["USD"]["inputCacheHit"]["offPeak"] = now
+          json.dump(facts, open("facts.json", "w"))
+          print(f"SELF-TEST: {was} -> {now}. That number is on no page. The gate must refuse.")
+          PY
+
+      - name: Ground the reading in the pages, and write the config
+        run: |
+          set -uo pipefail
+          code=0
+          python3 .github/scripts/apply-ai-prices.py || code=$?
+          case "$code" in
+            0) ;;
+            1) exit 1 ;;   # refused - the reading cannot be trusted, nothing was written
+            2) echo "::warning::only one reader could read the page this run" ;;
+            *) exit "$code" ;;
+          esac
+
+      # The model path is the one this job exists for, but a model outage must not hold up a
+      # price fix -- that would let an unrelated failure stop the one thing this repository does.
+      # Falling back is therefore allowed, and it is announced rather than done quietly.
+      #
+      # `success()` is explicit rather than implied, and it is load-bearing. A step that carries
+      # an `if:` does NOT inherit the usual "only run if everything so far passed" rule - so
+      # without it, a run where the gate refused would fall through to here and write the very
+      # config the gate had just rejected.
+      - name: Fall back to the regex parser alone
+        if: success() && steps.ai.outcome != 'success'
+        run: |
+          echo "::warning::the model did not answer; this sync used the regex parser alone"
+          python3 .github/scripts/sync-prices.py
 
       - name: Open a pull request if anything moved
         env:
@@ -83,9 +183,9 @@ jobs:
             echo "${output}"
           fi
 
-      - name: Fail loudly if the page could not be parsed
+      - name: Fail loudly if nothing could read the page
         if: failure()
         run: |
           echo "::error::Could not read DeepSeek's pricing page. This is not a price change --" \
-                "the page most likely changed shape, and the parser needs updating." \
+                "the page most likely changed shape, and the reader needs updating." \
                 "Nothing was written."
