@@ -37,6 +37,17 @@ on:
           cent after the fact. The run MUST FAIL - the number is on no page. A green run here
           means the gate is not doing anything."
         required: false
+      # The push half of the credential change, which is the half that can silently stop the
+      # one thing this repository does. `persist-credentials: false` takes the credential out of
+      # `.git/config`, and `git push` authenticates from exactly that key - so the push step now
+      # installs it itself. If that does not work, every price change stops opening a pull
+      # request while every run still reports success. The only way to know is to push into a
+      # scratch branch and delete it.
+      pushcheck:
+        description: "Self-test. Push into a throwaway branch to prove the re-installed
+          credential still works, then delete it. Nothing touches main."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -220,3 +231,48 @@ jobs:
           echo "::error::Could not read DeepSeek's pricing page. This is not a price change --" \
                 "the page most likely changed shape, and the reader needs updating." \
                 "Nothing was written."
+
+  # Runs only when asked. It writes nothing to the repository and deletes what it creates - its
+  # whole purpose is to fail loudly if the push mechanism broke, rather than quietly a day later
+  # when a price actually changes.
+  push-mechanism:
+    if: inputs.pushcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Confirm no credential was persisted
+        run: |
+          set -euo pipefail
+          if git config --get-regexp 'http\..*extraheader' >/dev/null 2>&1; then
+            echo "::error::checkout persisted a credential despite persist-credentials: false"
+            exit 1
+          fi
+          echo "no credential in .git/config, as intended - this is the state the reader runs in"
+
+      - name: Reinstall it the way the push step does, then push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+
+          branch="selfcheck-scratch-${GITHUB_RUN_ID}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          git commit --allow-empty -m "self-check: does the reinstalled credential still push"
+          git push -u origin "${branch}"
+          echo "pushed ${branch} - the mechanism works"
+
+      - name: Delete the scratch branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          git push origin --delete "selfcheck-scratch-${GITHUB_RUN_ID}" || \
+            echo "::warning::could not delete selfcheck-scratch-${GITHUB_RUN_ID}; remove it by hand"
