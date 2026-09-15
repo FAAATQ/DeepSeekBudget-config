@@ -29,7 +29,7 @@ on:
   schedule:
     # Daily. Prices change rarely, and an off-the-hour minute keeps this out of the rush that
     # every other scheduled job in the world joins.
-    - cron: "50 12 * * *"   # TEMPORARY - revert to "23 6 * * *"
+    - cron: "28 10 * * *"   # TEMPORARY - revert to "23 6 * * *"
   workflow_dispatch:
     inputs:
       selftest:
