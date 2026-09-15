@@ -1,0 +1,129 @@
+name: AI cross-check — read the page a second time
+
+# Why this exists.
+#
+# `sync-prices.py` reads DeepSeek's pricing page with anchored regexes and asserts at every step.
+# That is deliberate - it fails loudly rather than emitting a number it cannot derive. But one
+# field it never derives is the *weekday* rule: `deepseek.json` carries `days: [Mon..Fri]` as a
+# literal, while every other number around it is parsed. Reword "Monday through Friday" to
+# "every day" and the parser sees no change, opens no pull request, and says nothing. The app
+# would then be wrong on those days for every user, permanently and silently.
+#
+# So this job reads the same page a second time, independently, and compares only that field.
+# Only that field because it is the only one the parser does not already derive - cross-checking
+# the windows or the prices would re-test what the parser already covers, and every extra
+# comparison is another way to raise a false alarm about a page that is fine.
+#
+# It is advisory by design. It cannot block a price fix: it is a separate workflow, it holds no
+# write permission, and the sync job does not wait on it. A model outage must never hold up the
+# one thing this repository exists to do.
+#
+# Is the model actually reading, or answering from memory? Measured 2026-09-15 with a paired
+# control. The same prompt was given two versions of the page - the live one ("Monday through
+# Friday") and one with the phrase replaced by "Tuesdays and Thursdays", which no model has a
+# prior for. It answered Mon-Fri on the first and Tue+Thu on the second, quoting each page's own
+# sentence. A model answering from memory gives one answer to both.
+#
+# Credentials: a fine-grained PAT with only the `Copilot Requests` permission. The built-in
+# `GITHUB_TOKEN` cannot authenticate the Copilot CLI - measured, see the probe history. This
+# workflow has no pull_request trigger, so the secret is never reachable from a fork.
+
+on:
+  schedule:
+    # An hour after the price check, so a disagreement is read alongside the sync it refers to.
+    - cron: "53 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crosscheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm install -g @github/copilot
+
+      - name: Fetch the page and render the prompt
+        run: |
+          python3 - <<'PY'
+          import importlib.util, re, html
+          spec = importlib.util.spec_from_file_location("sp", ".github/scripts/sync-prices.py")
+          sp = importlib.util.module_from_spec(spec); spec.loader.exec_module(sp)
+          urls = re.findall(r'"(https://[^"]+)"', open(".github/scripts/sync-prices.py").read())
+          page = sp.get([u for u in urls if "pricing" in u][0])
+
+          text = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page)))
+          tpl = open(".github/prompts/peak-rule.txt").read()
+          assert "{{page}}" in tpl, "the prompt lost its placeholder"
+          open("full-prompt.txt", "w").write(tpl.replace("{{page}}", text))
+          print(f"page {len(text)} chars, prompt {len(tpl) + len(text)} chars")
+          PY
+
+      # Invoked directly rather than through `actions/ai-inference`. That action reports success
+      # and produces no output when the file it was told to attach does not reach the model,
+      # which is exactly what happened while this was being built - the log said nothing and the
+      # step passed. Calling the CLI puts stdout and stderr in the log.
+      - name: Ask the model what days the page states
+        id: ai
+        continue-on-error: true
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
+        run: |
+          set -uo pipefail
+          copilot -p "$(cat full-prompt.txt)" -s --no-ask-user --model auto \
+            > answer.json 2> stderr.txt
+          echo "copilot exit=$?  stdout=$(wc -c < answer.json) bytes  stderr=$(wc -c < stderr.txt) bytes"
+          head -c 1000 answer.json
+          echo
+          head -c 800 stderr.txt
+
+      - name: Compare with what the config says
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          import json, sys
+
+          config = json.load(open("deepseek.json"))
+          committed = []
+          for block in config["schedule"]["weekly"]:
+              committed.extend(block["days"])
+          committed = sorted(set(committed))
+
+          try:
+              raw = open("answer.json").read().strip()
+              # The CLI sometimes wraps its answer in a fence even when told not to.
+              if raw.startswith("```"):
+                  raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+              ai = json.loads(raw)
+          except Exception as e:
+              print(f"::warning::the model did not return usable JSON ({e}) - no second opinion "
+                    f"this run. This is not a price problem.")
+              sys.exit(0)
+
+          reported = sorted(set(ai.get("days") or []))
+          print(f"model quote : {ai.get('quote')}")
+          print(f"model days  : {reported}")
+          print(f"deepseek.json: {committed}")
+
+          if reported == committed:
+              print("\nthe two readers agree")
+              sys.exit(0)
+
+          if not reported:
+              print("::warning::the model returned no days - no second opinion this run")
+              sys.exit(0)
+
+          print(f"::error::the page and deepseek.json disagree about the peak weekdays. "
+                f"The page says {reported}, deepseek.json says {committed}. "
+                f"sync-prices.py cannot see this field - it is a literal in the config - so "
+                f"nothing else will catch it. A human should read the page and decide.")
+          sys.exit(1)
+          PY

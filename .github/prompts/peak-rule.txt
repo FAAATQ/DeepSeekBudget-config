@@ -1,0 +1,21 @@
+Below is the text of DeepSeek's API pricing page.
+
+Report the peak pricing rule exactly as THIS PAGE states it. Do not use anything you already
+know about DeepSeek's pricing. If this page disagrees with what you remember, the page wins.
+
+Two fields:
+
+  quote     Copy, word for word, the part of the page that says which days the peak rule
+            applies to. Use the page's own wording. Do not paraphrase it, do not tidy it up,
+            and do not answer this field with a bare list of day names.
+
+  days      The weekdays the rule applies to, derived FROM THE QUOTE ABOVE - not from memory,
+            and not from what is usual for this kind of product - as three-letter
+            abbreviations from ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]. If the quote says
+            the rule applies every day, list all seven.
+
+Reply with one JSON object, and nothing else - no prose and no markdown fences.
+
+Page text:
+
+{{page}}
