@@ -27,9 +27,19 @@ name: Check DeepSeek's published prices
 
 on:
   schedule:
-    # Daily. Prices change rarely, and an off-the-hour minute keeps this out of the rush that
-    # every other scheduled job in the world joins.
-    - cron: "57 12 * * *"   # TEMPORARY - revert to "23 6 * * *"
+    # Twice a day, not once. The redundancy is the point, not the speed.
+    #
+    # GitHub's scheduler is best-effort: it delays under load and **drops queued jobs
+    # outright** when load is high enough. Measured here on 2026-09-15: a job scheduled for
+    # 06:53 UTC actually ran at 12:16 UTC - 5h23m late. One run a day plus an unreliable
+    # scheduler means a dropped run costs a full day of staleness; two runs means it costs
+    # half of one. The intra-day gap between ① and ③ shrinks as a side effect, but that is
+    # not the reason - a human merges the pull request and the app checks on its own schedule,
+    # so a few hours of head start is not what this buys.
+    #
+    # Off-the-hour minutes keep this out of the rush every other scheduled job joins.
+    - cron: "23 6 * * *"
+    - cron: "41 18 * * *"
   workflow_dispatch:
     inputs:
       selftest:
